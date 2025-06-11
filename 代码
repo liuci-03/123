@@ -1,0 +1,225 @@
+# 导入必要的库
+import numpy as np  # 数值计算库，用于高效的数组操作和数学运算
+import pandas as pd  # 数据处理库，提供DataFrame等数据结构
+import warnings  # 警告处理模块
+import matplotlib  # 绘图库
+import matplotlib.pyplot as plt  # matplotlib的绘图接口
+import seaborn as sns  # 基于matplotlib的统计数据可视化库
+from scipy.special import jn  # 贝塞尔函数（实际未使用）
+from IPython.display import display, clear_output  # Jupyter notebook显示工具
+import time  # 时间相关操作
+
+# 忽略警告信息
+warnings.filterwarnings('ignore')
+
+# 导入机器学习相关库
+from sklearn import linear_model  # 线性模型（如线性回归）
+from sklearn import preprocessing  # 数据预处理（如标准化）
+from sklearn.svm import SVR  # 支持向量回归
+from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor  # 集成方法（随机森林和梯度提升）
+
+# 降维方法
+from sklearn.decomposition import PCA, FastICA, FactorAnalysis, SparsePCA
+
+# 导入梯度提升框架
+import lightgbm as lgb  # 微软开发的轻量级GBDT框架
+import xgboost as xgb  # XGBoost梯度提升框架
+
+# 模型选择和评估工具
+from sklearn.model_selection import GridSearchCV, cross_val_score, StratifiedKFold, train_test_split  # 交叉验证、参数搜索等
+from sklearn.metrics import mean_squared_error, mean_absolute_error  # 评估指标（均方误差和平均绝对误差）
+
+# 加载训练集和测试集
+# 注意：文件路径需要根据实际情况修改
+train_dataset = pd.read_csv('D:\\Users\LENOVO\Desktop\机器学习\\used_car_train_20200313\\used_car_train_20200313.csv',
+                            sep=' ')
+testA_dataset = pd.read_csv('D:\\Users\LENOVO\Desktop\机器学习\\used_car_testA_20200313\\used_car_testA_20200313.csv',
+                            sep=' ')
+
+# 打印数据集形状（行数和列数）
+print('训练集形状:', train_dataset.shape)
+print('测试集A形状:', testA_dataset.shape)
+
+# 显示训练集前几行（默认5行）
+train_dataset.head()
+
+# 显示测试集的统计描述（计数、均值、标准差等）
+testA_dataset.describe()
+
+# 显示训练集的详细信息（列名、非空值数量、数据类型等）
+train_dataset.info()
+
+# 选择数值型列（排除object类型）
+numeric_columns = train_dataset.select_dtypes(exclude='object').columns
+print('数值型列:', numeric_columns)
+
+# 选择类别型列（只包含object类型）
+categorical_columns = train_dataset.select_dtypes(include='object').columns
+print('类别型列:', categorical_columns)
+
+# 构建特征列（排除不需要的列和包含'Type'的列）
+feature_columns = [col for col in numeric_columns if
+                   col not in ['SaleID', 'name', 'regDate', 'creatDate', 'price', 'model', 'brand', 'regionCode',
+                               'seller']]
+feature_columns = [col for col in feature_columns if 'Type' not in col]
+
+# 准备训练数据和标签
+X_training = train_dataset[feature_columns]  # 特征数据
+Y_training = train_dataset['price']  # 目标变量（价格）
+
+# 准备测试数据
+X_testing = testA_dataset[feature_columns]
+
+# 打印特征数据形状
+print('训练特征形状:', X_training.shape)
+print('测试特征形状:', X_testing.shape)
+
+
+# 定义统计信息函数
+def statistical_info(data):
+    """打印数据的统计信息"""
+    print('最小值', np.min(data))
+    print('最大值', np.max(data))
+    print('平均值', np.mean(data))
+    print('极差', np.ptp(data))  # ptp = max - min
+    print('标准差', np.std(data))
+    print('方差', np.var(data))
+
+
+# 打印目标变量的统计信息
+print('目标变量统计信息:')
+statistical_info(Y_training)
+# 绘制目标变量分布直方图
+plt.hist(Y_training)
+plt.show()
+plt.close()
+
+# 初始化XGBoost模型
+xgb_model = xgb.XGBRegressor(
+    n_estimators=120,  # 树的数量
+    learning_rate=0.1,  # 学习率
+    gamma=0,  # 最小损失减少阈值
+    subsample=0.8,  # 样本采样比例
+    colsample_bytree=0.9,  # 特征采样比例
+    max_depth=7  # 树的最大深度
+)
+
+# 初始化存储得分的列表
+training_scores = []
+validation_scores = []
+
+# 使用分层K折交叉验证（虽然回归问题通常不需要分层）
+stratified_kfold = StratifiedKFold(n_splits=5, shuffle=True, random_state=0)
+
+# 交叉验证循环
+for train_index, val_index in stratified_kfold.split(X_training, Y_training):
+    # 划分训练集和验证集
+    training_x = X_training.iloc[train_index].values
+    training_y = Y_training.iloc[train_index]
+    validation_x = X_training.iloc[val_index].values
+    validation_y = Y_training.iloc[val_index]
+
+    # 训练模型
+    xgb_model.fit(training_x, training_y)
+
+    # 预测
+    training_prediction_xgb = xgb_model.predict(training_x)
+    validation_prediction_xgb = xgb_model.predict(validation_x)
+
+    # 计算MAE并存储
+    training_score = mean_absolute_error(training_y, training_prediction_xgb)
+    training_scores.append(training_score)
+    validation_score = mean_absolute_error(validation_y, validation_prediction_xgb)
+    validation_scores.append(validation_score)
+
+# 打印平均MAE
+print('训练MAE:', np.mean(training_scores))
+print('验证MAE:', np.mean(validation_scores))
+
+
+# 定义XGBoost模型构建函数
+def construct_xgb_model(x_train, y_train):
+    """构建并训练XGBoost模型"""
+    model = xgb.XGBRegressor(
+        n_estimators=150,  # 增加树的数量
+        learning_rate=0.1,
+        gamma=0,
+        subsample=0.8,
+        colsample_bytree=0.9,
+        max_depth=7
+    )
+    model.fit(x_train, y_train)
+    return model
+
+
+# 定义LightGBM模型构建函数
+def construct_lgb_model(x_train, y_train):
+    """构建并训练LightGBM模型，使用网格搜索优化学习率"""
+    estimator = lgb.LGBMRegressor(
+        num_leaves=127,  # 叶子数量
+        n_estimators=150  # 树的数量
+    )
+    # 定义参数网格
+    param_grid = {
+        'learning_rate': [0.01, 0.05, 0.1, 0.2],  # 学习率候选值
+    }
+    # 初始化网格搜索
+    gbm = GridSearchCV(estimator, param_grid)
+    gbm.fit(x_train, y_train)
+    return gbm
+
+
+# 划分训练集和验证集（70%训练，30%验证）
+x_train, x_val, y_train, y_val = train_test_split(X_training, Y_training, test_size=0.3)
+
+# 训练LightGBM模型
+print('训练LightGBM...')
+lgb_model = construct_lgb_model(x_train, y_train)
+validation_lgb = lgb_model.predict(x_val)
+MAE_lgb = mean_absolute_error(y_val, validation_lgb)
+print('LightGBM验证MAE:', MAE_lgb)
+
+# 使用全量数据训练LightGBM并预测测试集
+print('使用LightGBM预测...')
+lgb_prediction_model = construct_lgb_model(X_training, Y_training)
+submissionA_lgb = lgb_prediction_model.predict(X_testing)
+print('LightGBM预测结果统计:')
+statistical_info(submissionA_lgb)
+
+# 训练XGBoost模型
+print('训练XGBoost...')
+xgb_model = construct_xgb_model(x_train, y_train)
+validation_xgb = xgb_model.predict(x_val)
+MAE_xgb = mean_absolute_error(y_val, validation_xgb)
+print('XGBoost验证MAE:', MAE_xgb)
+
+# 使用全量数据训练XGBoost并预测测试集
+print('使用XGBoost预测...')
+xgb_prediction_model = construct_xgb_model(X_training, Y_training)
+submissionA_xgb = xgb_prediction_model.predict(X_testing)
+print('XGBoost预测结果统计:')
+statistical_info(submissionA_xgb)
+
+# 创建加权集成预测（基于两个模型的MAE权重）
+validation_weighted = (1 - MAE_lgb / (MAE_xgb + MAE_lgb)) * validation_lgb + \
+                      (1 - MAE_xgb / (MAE_xgb + MAE_lgb)) * validation_xgb
+# 处理负预测值（设为10）
+validation_weighted[validation_weighted < 0] = 10
+print('加权集成验证MAE:', mean_absolute_error(y_val, validation_weighted))
+
+# 对测试集创建加权集成预测
+submission_weighted = (1 - MAE_lgb / (MAE_xgb + MAE_lgb)) * submissionA_lgb + \
+                      (1 - MAE_xgb / (MAE_xgb + MAE_lgb)) * submissionA_xgb
+
+# 再次绘制目标变量分布
+plt.hist(Y_training)
+plt.show()
+plt.close()
+
+# 读取提交样本文件
+submission_dataframe = pd.read_csv("D:\\Users\LENOVO\Desktop\机器学习\\used_car_sample_submit.csv")
+
+# 将预测结果填入提交文件
+submission_dataframe['price'] = submission_weighted
+# 保存提交文件（不带索引列）
+submission_dataframe.to_csv('D:\\Users\LENOVO\Desktop\机器学习\\000.csv', index=False)
